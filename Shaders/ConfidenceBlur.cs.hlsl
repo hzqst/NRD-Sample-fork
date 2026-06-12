@@ -1,6 +1,6 @@
 // © 2024 NVIDIA Corporation
 
-#include "Include/Shared.hlsli"
+#include "Shared.hlsli"
 
 struct PushConstants
 {
@@ -31,7 +31,7 @@ float2 GetGeometryWeightParams( float3 Nv, float3 Xv )
     Math::SmoothStep( 1.0, 0.0, abs( ( x ) * px + py ) )
 
 [numthreads( 16, 16, 1 )]
-void main( uint2 pixelPos : SV_DispatchThreadId )
+void main( uint2 pixelPos : SV_DispatchThreadID )
 {
     float2 pixelUv = ( pixelPos + 0.5 ) * gInvSharcRenderSize;
 

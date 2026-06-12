@@ -40,9 +40,9 @@
 #define USE_BIAS_FIX                        0 // fixes negligible hair and specular bias
 #define USE_AO_FOR_LAST_BOUNCE              0 // apply a simple AO estimation to SHARC data for the last bounce
 #define USE_WHITE_FURNACE                   0 // energy conservation test
+#define USE_BLUE_NOISE_FOR_RADIANCE         ( 0 && !gRR && gDenoiserType != DENOISER_REFERENCE ) // helps to reduce residual boiling, but worsens IQ due to limited coverage of all possible directions
 #define USE_CAMERA_ATTACHED_REFLECTION_TEST 0 // test special treatment for reflections of objects attached to the camera
 #define USE_RUSSIAN_ROULETTE                0 // bad practice for real-time denoising
-#define USE_BLUE_NOISE_FOR_RADIANCE         ( 0 && !gRR && gDenoiserType != DENOISER_REFERENCE ) // helps to reduce residual boiling, but worsens IQ due to limited coverage of all possible directions
 
 //=============================================================================================
 // CONSTANTS
@@ -105,8 +105,7 @@
 #define SET_OTHER                           0
 #define SET_RAY_TRACING                     1
 #define SET_SHARC                           2
-#define SET_MORPH                           3
-#define SET_ROOT                            4
+#define SET_ROOT                            3
 
 // Path tracing
 #define PT_THROUGHPUT_THRESHOLD             0.001
@@ -115,10 +114,8 @@
 #define PT_SHADOW_RAY_OFFSET                0.25 // pixels
 #define PT_BOUNCE_RAY_OFFSET                0.25 // pixels
 #define PT_GLASS_RAY_OFFSET                 0.05 // pixels
-#define PT_MAX_FIREFLY_RELATIVE_INTENSITY   20.0 // no more than 20x energy increase in case of probabilistic sampling
 #define PT_EVIL_TWIN_LOBE_TOLERANCE         0.005 // normalized %
-#define PT_GLASS_MIN_F                      0.05 // adds a bit of stability and bias
-#define PT_DELTA_BOUNCES_NUM                8
+#define PT_DELTA_BOUNCES_NUM                16
 #define PT_PSR_BOUNCES_NUM                  2
 #define PT_RAY_FLAGS                        0
 
@@ -126,13 +123,15 @@
 #define SHARC_CAPACITY                      ( 1 << 22 )
 #define SHARC_SCENE_SCALE                   45.0
 #define SHARC_DOWNSCALE                     5
-#define SHARC_ANTI_FIREFLY                  false
-#define SHARC_STALE_FRAME_NUM_MIN           32 // new version uses 8 by default, old value offers more stability in voxels with low number of samples ( critical for glass )
+#define SHARC_RESPONSIVE_FRAME_NUM          32
+#define SHARC_STALE_FRAME_NUM_MIN           8 // default
 #define SHARC_SEPARATE_EMISSIVE             1
 #define SHARC_MATERIAL_DEMODULATION         1
 #define SHARC_USE_FP16                      0
 #define SHARC_RADIANCE_SCALE                100.0 // matches max emission intensity range ( must be > SUN_INTENSITY )
 #define SHARC_RESAMPLING_DEPTH_MIN          1
+#define SHARC_PROPAGATION_DEPTH             4 // new version use 2, it looks worse
+#define SHARC_ENABLE_RESPONSIVE_LIGHTING    0 // TODO: hook up
 
 // Blue noise
 #define BLUE_NOISE_SPATIAL_DIM              128 // see StaticTexture::ScramblingRanking
@@ -149,10 +148,6 @@
 #define TAA_HISTORY_SHARPNESS               0.66 // sharper ( was 0.5 )
 #define TAA_SIGMA_SCALE                     2.0 // allow nano ghosting ( was 1.0 ) // TODO: can negatively affect moving shadows
 #define GARBAGE                             sqrt( -1.0 ) // sqrt( -1.0 ) or -log( 0.0 ) or 32768.0
-
-#define MORPH_MAX_ACTIVE_TARGETS_NUM        8u
-#define MORPH_ELEMENTS_PER_ROW_NUM          4
-#define MORPH_ROWS_NUM                      ( MORPH_MAX_ACTIVE_TARGETS_NUM / MORPH_ELEMENTS_PER_ROW_NUM )
 
 // Instance flags
 #define FLAG_FIRST_BIT                      24 // this + number of flags must be <= 32
@@ -207,31 +202,6 @@ struct InstanceData
     uint32_t textureOffsetAndFlags;
     uint32_t primitiveOffset;
     float scale; // TODO: handling object scale embedded into the transformation matrix (assuming uniform scale), sign represents triangle winding
-
-    uint32_t morphPrimitiveOffset;
-    uint32_t unused1;
-    uint32_t unused2;
-    uint32_t unused3;
-};
-
-struct MorphVertex // same as utils::MorphVertex
-{
-    float16_t4 pos;
-    float16_t2 N;
-    float16_t2 T;
-};
-
-struct MorphAttributes
-{
-    float16_t2 N;
-    float16_t2 T;
-};
-
-struct MorphPrimitivePositions
-{
-    float16_t4 pos0;
-    float16_t4 pos1;
-    float16_t4 pos2;
 };
 
 //===============================================================
@@ -289,7 +259,6 @@ NRI_RESOURCE( cbuffer, GlobalConstants, b, 0, SET_ROOT )
     float gExposure;
     float gMipBias;
     float gOrthoMode;
-    float gMinProbability;
     uint32_t gMaxAccumulatedFrameNum;
     uint32_t gDenoiserType;
     uint32_t gDisableShadowsAndEnableImportanceSampling; // TODO: remove - modify GetSunIntensity to return 0 if sun is below horizon
@@ -308,28 +277,7 @@ NRI_RESOURCE( cbuffer, GlobalConstants, b, 0, SET_ROOT )
     uint32_t gPSR;
     uint32_t gSHARC;
     uint32_t gTrimLobe;
-};
-
-NRI_RESOURCE( cbuffer, MorphMeshUpdateVerticesConstants, b, 0, SET_ROOT )
-{
-    uint4 gIndices[ MORPH_ROWS_NUM ];
-    float4 gWeights[ MORPH_ROWS_NUM ];
-
-    uint32_t gNumWeights;
-    uint32_t gNumVertices;
-    uint32_t gPositionCurrFrameOffset;
-    uint32_t gAttributesOutputOffset;
-};
-
-NRI_RESOURCE( cbuffer, MorphMeshUpdatePrimitivesConstants, b, 0, SET_ROOT )
-{
-    uint2 gPositionFrameOffsets;
-    uint32_t gNumPrimitives;
-    uint32_t gIndexOffset;
-
-    uint32_t gAttributesOffset;
-    uint32_t gPrimitiveOffset;
-    uint32_t gMorphPrimitiveOffset;
+    float gMinProbability;
 };
 
 #if( !defined( __cplusplus ) )
@@ -384,16 +332,6 @@ float3 GetMotion( float3 X, float3 Xprev )
     motion.z = viewZprev - viewZ;
 
     return motion;
-}
-
-float3 ApplyExposure( float3 Lsum )
-{
-    #if( NRD_MODE < OCCLUSION )
-        if( gOnScreen <= SHOW_DENOISED_SPECULAR )
-            Lsum *= gExposure;
-    #endif
-
-    return Lsum;
 }
 
 float3 ApplyTonemap( float3 Lsum )

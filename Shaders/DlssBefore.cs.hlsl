@@ -1,6 +1,6 @@
 // © 2022 NVIDIA Corporation
 
-#include "Include/Shared.hlsli"
+#include "Shared.hlsli"
 
 NRI_RESOURCE( Texture2D<float4>, gIn_Normal_Roughness, t, 0, SET_OTHER );
 NRI_RESOURCE( Texture2D<float4>, gIn_BaseColor_Metalness, t, 1, SET_OTHER );
@@ -13,7 +13,7 @@ NRI_FORMAT("unknown") NRI_RESOURCE( RWTexture2D<float>, gOut_SpecHitDistance, u,
 NRI_FORMAT("unknown") NRI_RESOURCE( RWTexture2D<float4>, gOut_Normal_Roughness, u, 4, SET_OTHER );
 
 [numthreads( 16, 16, 1 )]
-void main( uint2 pixelPos : SV_DispatchThreadId )
+void main( uint2 pixelPos : SV_DispatchThreadID )
 {
     float2 pixelUv = ( float2( pixelPos ) + 0.5 ) * gInvRenderSize;
 

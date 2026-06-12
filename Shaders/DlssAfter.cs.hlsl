@@ -1,11 +1,11 @@
 // © 2022 NVIDIA Corporation
 
-#include "Include/Shared.hlsli"
+#include "Shared.hlsli"
 
 NRI_FORMAT("unknown") NRI_RESOURCE( RWTexture2D<float3>, gOut_Image, u, 0, SET_OTHER );
 
 [numthreads( 16, 16, 1 )]
-void main( uint2 pixelPos : SV_DispatchThreadId )
+void main( uint2 pixelPos : SV_DispatchThreadID )
 {
     float2 pixelUv = float2( pixelPos + 0.5 ) * gInvOutputSize;
 
